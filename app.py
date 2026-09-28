@@ -211,8 +211,8 @@ def load_yolo_engine(path: str):
 model, device = load_yolo_engine(model_path)
 track_history = {}
 
-# Inference size
-INFER_SIZE = 640 if "cuda" in device else 416
+# Set lightweight inference size (keeps pipeline real-time)
+INFER_SIZE = 480 if "cuda" in device else 384
 
 # ---------------------------------------------------------
 # Sidebar Controls & Sensitivity
@@ -223,8 +223,8 @@ with st.sidebar:
     iou_thresh = st.slider("IoU NMS Overlap", 0.20, 0.90, 0.45, 0.05)
     enable_tracking = st.toggle("ByteTrack Kinematics", value=True)
     
-    # Frame skip rate (defaults higher on CPU to protect against throttle limits)
-    frame_skip = st.slider("CPU Frame Skip Rate", 1, 8, 4 if device == "cpu" else 1)
+    # Frame skip rate (defaults to 3 for smooth network streaming)
+    frame_skip = st.slider("Stream Frame Skip Rate", 1, 8, 3)
 
     st.markdown("---")
     st.subheader("⚠️ Hazard Distance Thresholds")
@@ -466,11 +466,12 @@ if input_mode == "📹 Video Perception Feed":
             if frame_counter % frame_skip != 0:
                 continue
 
-            # Downsample input frame to 640px before inference to protect compute
+            # Downsample resolution to 480px width to keep payload minimal for ngrok
             orig_h, orig_w = frame.shape[:2]
-            if orig_w > 640:
-                scale = 640 / orig_w
-                frame = cv2.resize(frame, (640, int(orig_h * scale)), interpolation=cv2.INTER_AREA)
+            target_w = 480
+            if orig_w > target_w:
+                scale = target_w / orig_w
+                frame = cv2.resize(frame, (target_w, int(orig_h * scale)), interpolation=cv2.INTER_AREA)
 
             start_time = time.time()
             annotated_frame, bev_radar, total_objs, ped_cnt, crit_threats = process_frame(
@@ -481,36 +482,42 @@ if input_mode == "📹 Video Perception Feed":
             num_critical = len(crit_threats)
             threat_str = ", ".join([f"{k} ({v})" for k, v in Counter(crit_threats).items()]) if crit_threats else "None"
 
-            if num_critical > 0:
-                alert_placeholder.markdown(
-                    f"<div class='danger-banner'>⚠️ IMMINENT COLLISION THREAT: {num_critical} HAZARD(S) [{threat_str.upper()}]</div>",
+            # Batch telemetry card updates every 4 processed frames to prevent WebSocket starvation
+            if frame_counter % (frame_skip * 4) == 0:
+                if num_critical > 0:
+                    alert_placeholder.markdown(
+                        f"<div class='danger-banner'>⚠️ IMMINENT COLLISION THREAT: {num_critical} HAZARD(S) [{threat_str.upper()}]</div>",
+                        unsafe_allow_html=True,
+                    )
+                else:
+                    alert_placeholder.empty()
+
+                c_fps.markdown(
+                    f"""<div class="telemetry-card"><div class="telemetry-label">Perception FPS</div><div class="telemetry-value" style="color: #0284c7;">{infer_fps:.1f}</div></div>""",
                     unsafe_allow_html=True,
                 )
-            else:
-                alert_placeholder.empty()
+                c_peds.markdown(
+                    f"""<div class="telemetry-card telemetry-ped"><div class="telemetry-label">Pedestrians Detected</div><div class="telemetry-value">{ped_cnt}</div></div>""",
+                    unsafe_allow_html=True,
+                )
+                c_threats.markdown(
+                    f"""<div class="telemetry-card {'telemetry-alert' if num_critical > 0 else ''}"><div class="telemetry-label">Critical Hazards</div><div class="telemetry-value">{num_critical}</div></div>""",
+                    unsafe_allow_html=True,
+                )
+                c_targets.markdown(
+                    f"""<div class="telemetry-card"><div class="telemetry-label">Tracked Units</div><div class="telemetry-value">{total_objs}</div></div>""",
+                    unsafe_allow_html=True,
+                )
 
-            c_fps.markdown(
-                f"""<div class="telemetry-card"><div class="telemetry-label">Perception FPS</div><div class="telemetry-value" style="color: #0284c7;">{infer_fps:.1f}</div></div>""",
-                unsafe_allow_html=True,
-            )
-            c_peds.markdown(
-                f"""<div class="telemetry-card telemetry-ped"><div class="telemetry-label">Pedestrians Detected</div><div class="telemetry-value">{ped_cnt}</div></div>""",
-                unsafe_allow_html=True,
-            )
-            c_threats.markdown(
-                f"""<div class="telemetry-card {'telemetry-alert' if num_critical > 0 else ''}"><div class="telemetry-label">Critical Hazards</div><div class="telemetry-value">{num_critical}</div></div>""",
-                unsafe_allow_html=True,
-            )
-            c_targets.markdown(
-                f"""<div class="telemetry-card"><div class="telemetry-label">Tracked Units</div><div class="telemetry-value">{total_objs}</div></div>""",
-                unsafe_allow_html=True,
-            )
+            # Compress frames to JPEG bytes before sending to ngrok
+            _, cam_jpg = cv2.imencode('.jpg', annotated_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 60])
+            _, radar_jpg = cv2.imencode('.jpg', bev_radar, [int(cv2.IMWRITE_JPEG_QUALITY), 60])
 
-            st_frame.image(cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB), channels="RGB", use_container_width=True)
-            st_radar.image(cv2.cvtColor(bev_radar, cv2.COLOR_BGR2RGB), channels="RGB", use_container_width=True)
+            st_frame.image(cam_jpg.tobytes(), use_container_width=True)
+            st_radar.image(radar_jpg.tobytes(), use_container_width=True)
 
-            # Prevent CPU core starvation
-            time.sleep(0.03)
+            # Yield control so public network packets can flush smoothly
+            time.sleep(0.04)
 
         cap.release()
         try:
