@@ -8,6 +8,7 @@ from PIL import Image
 import streamlit as st
 import torch
 from ultralytics import YOLO
+from pyngrok import conf, ngrok
 
 # ---------------------------------------------------------
 # Page Configuration & Automotive Light Styling
@@ -16,8 +17,25 @@ st.set_page_config(
     page_title="RoadSense AI: Real-Time Road Object Perception & Collision Risk Warning System",
     page_icon="🚗",
     layout="wide",
-    initial_sidebar_state="collapsed",
+    initial_sidebar_state="expanded",
 )
+
+# ---------------------------------------------------------
+# Ngrok Public URL Automation
+# ---------------------------------------------------------
+NGROK_TOKEN = "3JxI5RQKx2TyrmurMO8H1CjGGog_8334nqMwVeL6BvkAW5TR4"
+
+@st.cache_resource
+def expose_app():
+    conf.get_default().auth_token = NGROK_TOKEN
+    tunnel = ngrok.connect(8501)
+    return tunnel.public_url
+
+try:
+    public_url = expose_app()
+    st.sidebar.success(f"🌐 **Public Link:**\n\n[{public_url}]({public_url})")
+except Exception as err:
+    st.sidebar.warning(f"Tunnel notice: {err}")
 
 st.markdown(
     """
@@ -193,7 +211,7 @@ def load_yolo_engine(path: str):
 model, device = load_yolo_engine(model_path)
 track_history = {}
 
-# Set optimal inference size based on compute hardware
+# Inference size
 INFER_SIZE = 640 if "cuda" in device else 416
 
 # ---------------------------------------------------------
@@ -205,8 +223,8 @@ with st.sidebar:
     iou_thresh = st.slider("IoU NMS Overlap", 0.20, 0.90, 0.45, 0.05)
     enable_tracking = st.toggle("ByteTrack Kinematics", value=True)
     
-    # User-adjustable frame skip for CPU acceleration
-    frame_skip = st.slider("CPU Frame Skip Rate", 1, 6, 3 if device == "cpu" else 1)
+    # Frame skip rate (defaults higher on CPU to protect against throttle limits)
+    frame_skip = st.slider("CPU Frame Skip Rate", 1, 8, 4 if device == "cpu" else 1)
 
     st.markdown("---")
     st.subheader("⚠️ Hazard Distance Thresholds")
@@ -431,7 +449,7 @@ if input_mode == "📹 Video Perception Feed":
 
             btn_pad_l, btn_center, btn_pad_r = st.columns([1.2, 1.6, 1.2])
             with btn_center:
-                stop_btn = st.button("⏹ Abort Pipeline", width="stretch")
+                stop_btn = st.button("⏹ Abort Pipeline", use_container_width=True)
 
         with radar_view:
             st.caption("Top-Down Ground Radar (BEV)")
@@ -445,9 +463,14 @@ if input_mode == "📹 Video Perception Feed":
                 break
 
             frame_counter += 1
-            # Skip frames to keep real-time playback speed on CPU
             if frame_counter % frame_skip != 0:
                 continue
+
+            # Downsample input frame to 640px before inference to protect compute
+            orig_h, orig_w = frame.shape[:2]
+            if orig_w > 640:
+                scale = 640 / orig_w
+                frame = cv2.resize(frame, (640, int(orig_h * scale)), interpolation=cv2.INTER_AREA)
 
             start_time = time.time()
             annotated_frame, bev_radar, total_objs, ped_cnt, crit_threats = process_frame(
@@ -483,14 +506,11 @@ if input_mode == "📹 Video Perception Feed":
                 unsafe_allow_html=True,
             )
 
-            # Downsample display resolution to 640px before streaming to browser
-            disp_w = 640
-            orig_h, orig_w = annotated_frame.shape[:2]
-            disp_h = int(orig_h * (disp_w / orig_w))
-            annotated_disp = cv2.resize(annotated_frame, (disp_w, disp_h), interpolation=cv2.INTER_LINEAR)
+            st_frame.image(cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB), channels="RGB", use_container_width=True)
+            st_radar.image(cv2.cvtColor(bev_radar, cv2.COLOR_BGR2RGB), channels="RGB", use_container_width=True)
 
-            st_frame.image(cv2.cvtColor(annotated_disp, cv2.COLOR_BGR2RGB), channels="RGB", width="stretch")
-            st_radar.image(cv2.cvtColor(bev_radar, cv2.COLOR_BGR2RGB), channels="RGB", width="stretch")
+            # Prevent CPU core starvation
+            time.sleep(0.03)
 
         cap.release()
         try:
@@ -525,6 +545,6 @@ elif input_mode == "🖼️ Single Frame Inspection":
 
         col_cam, col_rad = st.columns([3, 1.4])
         with col_cam:
-            st.image(cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB), caption="Ego Perspective", width="stretch")
+            st.image(cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB), caption="Ego Perspective", use_container_width=True)
         with col_rad:
-            st.image(cv2.cvtColor(bev_radar, cv2.COLOR_BGR2RGB), caption="Top-Down Ground Radar (BEV)", width="stretch")
+            st.image(cv2.cvtColor(bev_radar, cv2.COLOR_BGR2RGB), caption="Top-Down Ground Radar (BEV)", use_container_width=True)
