@@ -24,7 +24,6 @@ st.markdown(
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;700;800&family=JetBrains+Mono:wght@500;700&display=swap');
         
-        /* 1. Hide native Streamlit header to prevent top clipping */
         header[data-testid="stHeader"] {
             display: none !important;
         }
@@ -40,7 +39,6 @@ st.markdown(
             padding-bottom: 2rem !important;
         }
 
-        /* 2. Top HUD Bar - Auto height & overflow visible */
         .nav-hud {
             display: flex;
             justify-content: space-between;
@@ -83,7 +81,6 @@ st.markdown(
             white-space: nowrap;
         }
 
-        /* Telemetry Metric Tiles */
         .telemetry-card {
             background: #ffffff;
             border: 1px solid #e2e8f0;
@@ -122,7 +119,6 @@ st.markdown(
             color: #b45309 !important;
         }
 
-        /* Collision Danger Banner */
         .danger-banner {
             background: #fee2e2;
             border: 1px solid #fecaca;
@@ -136,7 +132,6 @@ st.markdown(
             box-shadow: 0 2px 6px rgba(239, 68, 68, 0.08);
         }
 
-        /* Centered Sleek Button Alignment */
         div[data-testid="stColumn"] > div > div > div > div.stButton {
             display: flex;
             justify-content: center;
@@ -175,11 +170,12 @@ CANDIDATE_PATHS = [
     "runs/hazard_detector/weights/best.pt",
     "weights/best.pt",
     "best.pt",
-    "yolo11s.pt",
+    "yolo11n.pt",
     "yolov8n.pt",
+    "yolo11s.pt",
 ]
 
-model_path = "yolo11s.pt"
+model_path = "yolo11n.pt"
 for candidate in CANDIDATE_PATHS:
     if os.path.isfile(candidate):
         model_path = candidate
@@ -188,8 +184,6 @@ for candidate in CANDIDATE_PATHS:
 @st.cache_resource
 def load_yolo_engine(path: str):
     dev = "cuda:0" if torch.cuda.is_available() else "cpu"
-    if not os.path.exists(path) and path not in ["yolo11s.pt", "yolov8n.pt"]:
-        path = "yolo11s.pt"
     try:
         loaded = YOLO(path)
     except Exception:
@@ -197,8 +191,10 @@ def load_yolo_engine(path: str):
     return loaded, dev
 
 model, device = load_yolo_engine(model_path)
-use_fp16 = "cuda" in device
 track_history = {}
+
+# Set optimal inference size based on compute hardware
+INFER_SIZE = 640 if "cuda" in device else 416
 
 # ---------------------------------------------------------
 # Sidebar Controls & Sensitivity
@@ -208,6 +204,9 @@ with st.sidebar:
     conf_thresh = st.slider("Confidence Cutoff", 0.05, 1.00, 0.35, 0.05)
     iou_thresh = st.slider("IoU NMS Overlap", 0.20, 0.90, 0.45, 0.05)
     enable_tracking = st.toggle("ByteTrack Kinematics", value=True)
+    
+    # User-adjustable frame skip for CPU acceleration
+    frame_skip = st.slider("CPU Frame Skip Rate", 1, 6, 3 if device == "cpu" else 1)
 
     st.markdown("---")
     st.subheader("⚠️ Hazard Distance Thresholds")
@@ -224,7 +223,7 @@ st.markdown(
             <div class="nav-title">🚗 RoadSense AI: Real-Time Perception and Collision Warning System</div>
             <div class="nav-subtitle">Multi-Tier Collision Guard • Kinematic TTC Tracking • Ground Plane BEV</div>
         </div>
-        <div class="core-badge">ENGINE: {device.upper()} {'(FP16)' if use_fp16 else ''}</div>
+        <div class="core-badge">ENGINE: {device.upper()}</div>
     </div>
     """,
     unsafe_allow_html=True,
@@ -237,16 +236,13 @@ def render_light_bev(tracked_objects, frame_w, frame_h, radar_dim=(320, 320)):
     radar = np.full((radar_dim[1], radar_dim[0], 3), 250, dtype=np.uint8)
     cx, cy = radar_dim[0] // 2, radar_dim[1] - 32
 
-    # Radar concentric range arcs
     for r in [60, 120, 180, 240]:
         cv2.ellipse(radar, (cx, cy), (r, r), 0, 180, 360, (220, 228, 238), 1, cv2.LINE_AA)
         cv2.putText(radar, f"{r//6}m", (cx + 6, cy - r + 12), cv2.FONT_HERSHEY_PLAIN, 0.65, (140, 155, 175), 1)
 
-    # Lateral road corridor bounds
     cv2.line(radar, (cx, cy), (cx - 125, cy - 250), (225, 230, 240), 1, cv2.LINE_AA)
     cv2.line(radar, (cx, cy), (cx + 125, cy - 250), (225, 230, 240), 1, cv2.LINE_AA)
 
-    # Ego Car Marker (Center)
     cv2.rectangle(radar, (cx - 10, cy - 18), (cx + 10, cy + 8), (2, 132, 199), -1)
     cv2.putText(radar, "EGO", (cx - 12, cy + 22), cv2.FONT_HERSHEY_PLAIN, 0.75, (2, 132, 199), 1)
 
@@ -278,11 +274,8 @@ def draw_hud_box(frame, x1, y1, x2, y2, color, label, is_ped=False):
     cv2.rectangle(frame, (x1, y1), (x2, y2), color, 1)
     cv2.line(frame, (x1, y1), (x1 + line_len, y1), color, t)
     cv2.line(frame, (x2, y1), (x2 - line_len, y1), color, t)
-    cv2.line(frame, (x2, y1), (x2, y1 + line_len), color, t)
     cv2.line(frame, (x1, y2), (x1 + line_len, y2), color, t)
-    cv2.line(frame, (x1, y2), (x1, y2 - line_len), color, t)
     cv2.line(frame, (x2, y2), (x2 - line_len, y2), color, t)
-    cv2.line(frame, (x2, y2), (x2, y2 - line_len), color, t)
 
     font = cv2.FONT_HERSHEY_SIMPLEX
     (tw, th), _ = cv2.getTextSize(label, font, 0.42, 1)
@@ -342,7 +335,7 @@ def process_frame(frame, tracker=False):
                 persist=True,
                 conf=conf_thresh,
                 iou=iou_thresh,
-                imgsz=640,
+                imgsz=INFER_SIZE,
                 tracker="bytetrack.yaml",
                 verbose=False,
             )[0]
@@ -351,7 +344,7 @@ def process_frame(frame, tracker=False):
                 frame,
                 conf=conf_thresh,
                 iou=iou_thresh,
-                imgsz=640,
+                imgsz=INFER_SIZE,
                 verbose=False,
             )[0]
 
@@ -436,7 +429,6 @@ if input_mode == "📹 Video Perception Feed":
             st_frame = st.empty()
             st.markdown("<div style='margin-top: 10px;'></div>", unsafe_allow_html=True)
 
-            # Centered under the video stream
             btn_pad_l, btn_center, btn_pad_r = st.columns([1.2, 1.6, 1.2])
             with btn_center:
                 stop_btn = st.button("⏹ Abort Pipeline", width="stretch")
@@ -446,54 +438,59 @@ if input_mode == "📹 Video Perception Feed":
             st_radar = st.empty()
 
         frame_counter = 0
-        last_annotated = None
-        last_bev = None
 
         while cap.isOpened() and not stop_btn:
-            start_time = time.time()
             ret, frame = cap.read()
             if not ret:
                 break
 
             frame_counter += 1
-            if frame_counter % (1 if "cuda" in device else 2) == 0:
-                annotated_frame, bev_radar, total_objs, ped_cnt, crit_threats = process_frame(
-                    frame, tracker=enable_tracking
-                )
-                last_annotated = annotated_frame
-                last_bev = bev_radar
+            # Skip frames to keep real-time playback speed on CPU
+            if frame_counter % frame_skip != 0:
+                continue
 
-                infer_fps = 1.0 / max(0.001, (time.time() - start_time))
-                num_critical = len(crit_threats)
-                threat_str = ", ".join([f"{k} ({v})" for k, v in Counter(crit_threats).items()]) if crit_threats else "None"
+            start_time = time.time()
+            annotated_frame, bev_radar, total_objs, ped_cnt, crit_threats = process_frame(
+                frame, tracker=enable_tracking
+            )
 
-                if num_critical > 0:
-                    alert_placeholder.markdown(
-                        f"<div class='danger-banner'>⚠️ IMMINENT COLLISION THREAT: {num_critical} HAZARD(S) [{threat_str.upper()}]</div>",
-                        unsafe_allow_html=True,
-                    )
-                else:
-                    alert_placeholder.empty()
+            infer_fps = 1.0 / max(0.001, (time.time() - start_time))
+            num_critical = len(crit_threats)
+            threat_str = ", ".join([f"{k} ({v})" for k, v in Counter(crit_threats).items()]) if crit_threats else "None"
 
-                c_fps.markdown(
-                    f"""<div class="telemetry-card"><div class="telemetry-label">Perception FPS</div><div class="telemetry-value" style="color: #0284c7;">{infer_fps:.1f}</div></div>""",
+            if num_critical > 0:
+                alert_placeholder.markdown(
+                    f"<div class='danger-banner'>⚠️ IMMINENT COLLISION THREAT: {num_critical} HAZARD(S) [{threat_str.upper()}]</div>",
                     unsafe_allow_html=True,
                 )
-                c_peds.markdown(
-                    f"""<div class="telemetry-card telemetry-ped"><div class="telemetry-label">Pedestrians Detected</div><div class="telemetry-value">{ped_cnt}</div></div>""",
-                    unsafe_allow_html=True,
-                )
-                c_threats.markdown(
-                    f"""<div class="telemetry-card {'telemetry-alert' if num_critical > 0 else ''}"><div class="telemetry-label">Critical Hazards</div><div class="telemetry-value">{num_critical}</div></div>""",
-                    unsafe_allow_html=True,
-                )
-                c_targets.markdown(
-                    f"""<div class="telemetry-card"><div class="telemetry-label">Tracked Units</div><div class="telemetry-value">{total_objs}</div></div>""",
-                    unsafe_allow_html=True,
-                )
+            else:
+                alert_placeholder.empty()
 
-                st_frame.image(cv2.cvtColor(last_annotated, cv2.COLOR_BGR2RGB), channels="RGB", width="stretch")
-                st_radar.image(cv2.cvtColor(last_bev, cv2.COLOR_BGR2RGB), channels="RGB", width="stretch")
+            c_fps.markdown(
+                f"""<div class="telemetry-card"><div class="telemetry-label">Perception FPS</div><div class="telemetry-value" style="color: #0284c7;">{infer_fps:.1f}</div></div>""",
+                unsafe_allow_html=True,
+            )
+            c_peds.markdown(
+                f"""<div class="telemetry-card telemetry-ped"><div class="telemetry-label">Pedestrians Detected</div><div class="telemetry-value">{ped_cnt}</div></div>""",
+                unsafe_allow_html=True,
+            )
+            c_threats.markdown(
+                f"""<div class="telemetry-card {'telemetry-alert' if num_critical > 0 else ''}"><div class="telemetry-label">Critical Hazards</div><div class="telemetry-value">{num_critical}</div></div>""",
+                unsafe_allow_html=True,
+            )
+            c_targets.markdown(
+                f"""<div class="telemetry-card"><div class="telemetry-label">Tracked Units</div><div class="telemetry-value">{total_objs}</div></div>""",
+                unsafe_allow_html=True,
+            )
+
+            # Downsample display resolution to 640px before streaming to browser
+            disp_w = 640
+            orig_h, orig_w = annotated_frame.shape[:2]
+            disp_h = int(orig_h * (disp_w / orig_w))
+            annotated_disp = cv2.resize(annotated_frame, (disp_w, disp_h), interpolation=cv2.INTER_LINEAR)
+
+            st_frame.image(cv2.cvtColor(annotated_disp, cv2.COLOR_BGR2RGB), channels="RGB", width="stretch")
+            st_radar.image(cv2.cvtColor(bev_radar, cv2.COLOR_BGR2RGB), channels="RGB", width="stretch")
 
         cap.release()
         try:
