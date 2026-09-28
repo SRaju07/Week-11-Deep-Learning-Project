@@ -277,13 +277,12 @@ def draw_hud_box(frame, x1, y1, x2, y2, color, label, is_ped=False):
 
     cv2.rectangle(frame, (x1, y1), (x2, y2), color, 1)
     cv2.line(frame, (x1, y1), (x1 + line_len, y1), color, t)
-    cv2.line(frame, (x1, y1), (x1 + line_len, y1), color, t)
     cv2.line(frame, (x2, y1), (x2 - line_len, y1), color, t)
     cv2.line(frame, (x2, y1), (x2, y1 + line_len), color, t)
     cv2.line(frame, (x1, y2), (x1 + line_len, y2), color, t)
     cv2.line(frame, (x1, y2), (x1, y2 - line_len), color, t)
     cv2.line(frame, (x2, y2), (x2 - line_len, y2), color, t)
-    cv2.line(frame, (x2, y2), (x2 - line_len, y2), color, t)
+    cv2.line(frame, (x2, y2), (x2, y2 - line_len), color, t)
 
     font = cv2.FONT_HERSHEY_SIMPLEX
     (tw, th), _ = cv2.getTextSize(label, font, 0.42, 1)
@@ -339,11 +338,22 @@ def process_frame(frame, tracker=False):
     with torch.no_grad():
         if tracker:
             results = model.track(
-                frame, persist=True, conf=conf_thresh, iou=iou_thresh,
-                imgsz=640, half=use_fp16, tracker="bytetrack.yaml", verbose=False
+                frame,
+                persist=True,
+                conf=conf_thresh,
+                iou=iou_thresh,
+                imgsz=640,
+                tracker="bytetrack.yaml",
+                verbose=False,
             )[0]
         else:
-            results = model.predict(frame, conf=conf_thresh, iou=iou_thresh, imgsz=640, half=use_fp16, verbose=False)[0]
+            results = model.predict(
+                frame,
+                conf=conf_thresh,
+                iou=iou_thresh,
+                imgsz=640,
+                verbose=False,
+            )[0]
 
     ts = time.time()
     if results.boxes is not None and len(results.boxes) > 0:
@@ -429,7 +439,7 @@ if input_mode == "📹 Video Perception Feed":
             # Centered under the video stream
             btn_pad_l, btn_center, btn_pad_r = st.columns([1.2, 1.6, 1.2])
             with btn_center:
-                stop_btn = st.button("⏹ Abort Pipeline", use_container_width=True)
+                stop_btn = st.button("⏹ Abort Pipeline", width="stretch")
 
         with radar_view:
             st.caption("Top-Down Ground Radar (BEV)")
@@ -467,23 +477,23 @@ if input_mode == "📹 Video Perception Feed":
 
                 c_fps.markdown(
                     f"""<div class="telemetry-card"><div class="telemetry-label">Perception FPS</div><div class="telemetry-value" style="color: #0284c7;">{infer_fps:.1f}</div></div>""",
-                    unsafe_allow_html=True
+                    unsafe_allow_html=True,
                 )
                 c_peds.markdown(
                     f"""<div class="telemetry-card telemetry-ped"><div class="telemetry-label">Pedestrians Detected</div><div class="telemetry-value">{ped_cnt}</div></div>""",
-                    unsafe_allow_html=True
+                    unsafe_allow_html=True,
                 )
                 c_threats.markdown(
                     f"""<div class="telemetry-card {'telemetry-alert' if num_critical > 0 else ''}"><div class="telemetry-label">Critical Hazards</div><div class="telemetry-value">{num_critical}</div></div>""",
-                    unsafe_allow_html=True
+                    unsafe_allow_html=True,
                 )
                 c_targets.markdown(
                     f"""<div class="telemetry-card"><div class="telemetry-label">Tracked Units</div><div class="telemetry-value">{total_objs}</div></div>""",
-                    unsafe_allow_html=True
+                    unsafe_allow_html=True,
                 )
 
-                st_frame.image(cv2.cvtColor(last_annotated, cv2.COLOR_BGR2RGB), channels="RGB", use_container_width=True)
-                st_radar.image(cv2.cvtColor(last_bev, cv2.COLOR_BGR2RGB), channels="RGB", use_container_width=True)
+                st_frame.image(cv2.cvtColor(last_annotated, cv2.COLOR_BGR2RGB), channels="RGB", width="stretch")
+                st_radar.image(cv2.cvtColor(last_bev, cv2.COLOR_BGR2RGB), channels="RGB", width="stretch")
 
         cap.release()
         try:
@@ -518,6 +528,6 @@ elif input_mode == "🖼️ Single Frame Inspection":
 
         col_cam, col_rad = st.columns([3, 1.4])
         with col_cam:
-            st.image(cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB), caption="Ego Perspective", use_container_width=True)
+            st.image(cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB), caption="Ego Perspective", width="stretch")
         with col_rad:
-            st.image(cv2.cvtColor(bev_radar, cv2.COLOR_BGR2RGB), caption="Top-Down Ground Radar (BEV)", use_container_width=True)
+            st.image(cv2.cvtColor(bev_radar, cv2.COLOR_BGR2RGB), caption="Top-Down Ground Radar (BEV)", width="stretch")
