@@ -149,6 +149,7 @@ st.markdown(
             font-weight: 700;
             font-size: 0.82rem;
             padding: 8px 18px;
+            width: 100%;
             transition: all 0.2s ease;
         }
         div.stButton > button:hover {
@@ -244,7 +245,6 @@ def render_light_bev(tracked_objects, frame_w, frame_h, radar_dim=(320, 320)):
 
     for obj in tracked_objects:
         norm_x = (obj['center_x'] - (frame_w / 2)) / (frame_w / 2)
-        # Objects closer to the bottom of the screen (larger y2) are closer to the car
         rel_dist = np.clip(1.0 - (obj['bbox_bottom'] / frame_h), 0.05, 1.0)
 
         rx = int(cx + (norm_x * 125))
@@ -425,7 +425,6 @@ if input_mode == "📹 Video Perception Feed":
         with stream_view:
             st_frame = st.empty()
             st.markdown("<div style='margin-top: 10px;'></div>", unsafe_allow_html=True)
-            # Reliable stop control via session state checkbox
             stop_processing = st.checkbox("⏹ Stop Pipeline Stream", value=False)
 
         with radar_view:
@@ -484,8 +483,8 @@ if input_mode == "📹 Video Perception Feed":
                     unsafe_allow_html=True,
                 )
 
-            st_frame.image(cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB), channels="RGB", use_container_width=True)
-            st_radar.image(cv2.cvtColor(bev_radar, cv2.COLOR_BGR2RGB), channels="RGB", use_container_width=True)
+            st_frame.image(cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB), channels="RGB", width="stretch")
+            st_radar.image(cv2.cvtColor(bev_radar, cv2.COLOR_BGR2RGB), channels="RGB", width="stretch")
 
             time.sleep(0.01)
 
@@ -522,6 +521,6 @@ elif input_mode == "🖼️ Single Frame Inspection":
 
         col_cam, col_rad = st.columns([3, 1.4])
         with col_cam:
-            st.image(cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB), caption="Ego Perspective", use_container_width=True)
+            st.image(cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB), caption="Ego Perspective", width="stretch")
         with col_rad:
-            st.image(cv2.cvtColor(bev_radar, cv2.COLOR_BGR2RGB), caption="Top-Down Ground Radar (BEV)", use_container_width=True)
+            st.image(cv2.cvtColor(bev_radar, cv2.COLOR_BGR2RGB), caption="Top-Down Ground Radar (BEV)", width="stretch")
