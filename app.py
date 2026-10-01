@@ -8,7 +8,6 @@ from PIL import Image
 import streamlit as st
 import torch
 from ultralytics import YOLO
-from pyngrok import conf, ngrok
 
 # ---------------------------------------------------------
 # Page Configuration & Automotive Light Styling
@@ -19,23 +18,6 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
-
-# ---------------------------------------------------------
-# Ngrok Public URL Automation
-# ---------------------------------------------------------
-NGROK_TOKEN = "3JxI5RQKx2TyrmurMO8H1CjGGog_8334nqMwVeL6BvkAW5TR4"
-
-@st.cache_resource
-def expose_app():
-    conf.get_default().auth_token = NGROK_TOKEN
-    tunnel = ngrok.connect(8501)
-    return tunnel.public_url
-
-try:
-    public_url = expose_app()
-    st.sidebar.success(f"🌐 **Public Link:**\n\n[{public_url}]({public_url})")
-except Exception as err:
-    st.sidebar.warning(f"Tunnel notice: {err}")
 
 st.markdown(
     """
@@ -211,7 +193,6 @@ def load_yolo_engine(path: str):
 model, device = load_yolo_engine(model_path)
 track_history = {}
 
-# Set lightweight inference size (keeps pipeline real-time)
 INFER_SIZE = 480 if "cuda" in device else 384
 
 # ---------------------------------------------------------
@@ -222,9 +203,7 @@ with st.sidebar:
     conf_thresh = st.slider("Confidence Cutoff", 0.05, 1.00, 0.35, 0.05)
     iou_thresh = st.slider("IoU NMS Overlap", 0.20, 0.90, 0.45, 0.05)
     enable_tracking = st.toggle("ByteTrack Kinematics", value=True)
-    
-    # Frame skip rate (defaults to 3 for smooth network streaming)
-    frame_skip = st.slider("Stream Frame Skip Rate", 1, 8, 3)
+    frame_skip = st.slider("Stream Frame Skip Rate", 1, 8, 2)
 
     st.markdown("---")
     st.subheader("⚠️ Hazard Distance Thresholds")
@@ -466,9 +445,8 @@ if input_mode == "📹 Video Perception Feed":
             if frame_counter % frame_skip != 0:
                 continue
 
-            # Downsample resolution to 480px width to keep payload minimal for ngrok
             orig_h, orig_w = frame.shape[:2]
-            target_w = 480
+            target_w = 640
             if orig_w > target_w:
                 scale = target_w / orig_w
                 frame = cv2.resize(frame, (target_w, int(orig_h * scale)), interpolation=cv2.INTER_AREA)
@@ -482,8 +460,7 @@ if input_mode == "📹 Video Perception Feed":
             num_critical = len(crit_threats)
             threat_str = ", ".join([f"{k} ({v})" for k, v in Counter(crit_threats).items()]) if crit_threats else "None"
 
-            # Batch telemetry card updates every 4 processed frames to prevent WebSocket starvation
-            if frame_counter % (frame_skip * 4) == 0:
+            if frame_counter % (frame_skip * 2) == 0:
                 if num_critical > 0:
                     alert_placeholder.markdown(
                         f"<div class='danger-banner'>⚠️ IMMINENT COLLISION THREAT: {num_critical} HAZARD(S) [{threat_str.upper()}]</div>",
@@ -509,15 +486,8 @@ if input_mode == "📹 Video Perception Feed":
                     unsafe_allow_html=True,
                 )
 
-            # Compress frames to JPEG bytes before sending to ngrok
-            _, cam_jpg = cv2.imencode('.jpg', annotated_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 60])
-            _, radar_jpg = cv2.imencode('.jpg', bev_radar, [int(cv2.IMWRITE_JPEG_QUALITY), 60])
-
-            st_frame.image(cam_jpg.tobytes(), use_container_width=True)
-            st_radar.image(radar_jpg.tobytes(), use_container_width=True)
-
-            # Yield control so public network packets can flush smoothly
-            time.sleep(0.04)
+            st_frame.image(cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB), channels="RGB", use_container_width=True)
+            st_radar.image(cv2.cvtColor(bev_radar, cv2.COLOR_BGR2RGB), channels="RGB", use_container_width=True)
 
         cap.release()
         try:
