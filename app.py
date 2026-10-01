@@ -1,4 +1,7 @@
 import os
+# Fix Ultralytics non-writable config dir warning immediately
+os.environ["YOLO_CONFIG_DIR"] = "/tmp/Ultralytics"
+
 import time
 import tempfile
 from collections import Counter, deque
@@ -193,6 +196,7 @@ def load_yolo_engine(path: str):
 model, device = load_yolo_engine(model_path)
 track_history = {}
 
+# Keep input dimensions modest for cloud CPU environments
 INFER_SIZE = 480 if "cuda" in device else 384
 
 # ---------------------------------------------------------
@@ -203,7 +207,7 @@ with st.sidebar:
     conf_thresh = st.slider("Confidence Cutoff", 0.05, 1.00, 0.35, 0.05)
     iou_thresh = st.slider("IoU NMS Overlap", 0.20, 0.90, 0.45, 0.05)
     enable_tracking = st.toggle("ByteTrack Kinematics", value=True)
-    frame_skip = st.slider("Stream Frame Skip Rate", 1, 8, 2)
+    frame_skip = st.slider("Stream Frame Skip Rate", 1, 8, 3)
 
     st.markdown("---")
     st.subheader("⚠️ Hazard Distance Thresholds")
@@ -428,7 +432,7 @@ if input_mode == "📹 Video Perception Feed":
 
             btn_pad_l, btn_center, btn_pad_r = st.columns([1.2, 1.6, 1.2])
             with btn_center:
-                stop_btn = st.button("⏹ Abort Pipeline", use_container_width=True)
+                stop_btn = st.button("⏹ Abort Pipeline", width="stretch")
 
         with radar_view:
             st.caption("Top-Down Ground Radar (BEV)")
@@ -445,8 +449,9 @@ if input_mode == "📹 Video Perception Feed":
             if frame_counter % frame_skip != 0:
                 continue
 
+            # Resize to 540px width to keep CPU and WebSocket streaming fast
             orig_h, orig_w = frame.shape[:2]
-            target_w = 640
+            target_w = 540
             if orig_w > target_w:
                 scale = target_w / orig_w
                 frame = cv2.resize(frame, (target_w, int(orig_h * scale)), interpolation=cv2.INTER_AREA)
@@ -460,7 +465,8 @@ if input_mode == "📹 Video Perception Feed":
             num_critical = len(crit_threats)
             threat_str = ", ".join([f"{k} ({v})" for k, v in Counter(crit_threats).items()]) if crit_threats else "None"
 
-            if frame_counter % (frame_skip * 2) == 0:
+            # Update telemetry every 3 frames to avoid overwhelming UI re-renders
+            if frame_counter % (frame_skip * 3) == 0:
                 if num_critical > 0:
                     alert_placeholder.markdown(
                         f"<div class='danger-banner'>⚠️ IMMINENT COLLISION THREAT: {num_critical} HAZARD(S) [{threat_str.upper()}]</div>",
@@ -486,8 +492,12 @@ if input_mode == "📹 Video Perception Feed":
                     unsafe_allow_html=True,
                 )
 
-            st_frame.image(cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB), channels="RGB", use_container_width=True)
-            st_radar.image(cv2.cvtColor(bev_radar, cv2.COLOR_BGR2RGB), channels="RGB", use_container_width=True)
+            # Replaced use_container_width=True with width="stretch"
+            st_frame.image(cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB), channels="RGB", width="stretch")
+            st_radar.image(cv2.cvtColor(bev_radar, cv2.COLOR_BGR2RGB), channels="RGB", width="stretch")
+
+            # Crucial: yields control to Streamlit's WebSocket loop so the UI doesn't hang/freeze
+            time.sleep(0.01)
 
         cap.release()
         try:
@@ -522,6 +532,6 @@ elif input_mode == "🖼️ Single Frame Inspection":
 
         col_cam, col_rad = st.columns([3, 1.4])
         with col_cam:
-            st.image(cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB), caption="Ego Perspective", use_container_width=True)
+            st.image(cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB), caption="Ego Perspective", width="stretch")
         with col_rad:
-            st.image(cv2.cvtColor(bev_radar, cv2.COLOR_BGR2RGB), caption="Top-Down Ground Radar (BEV)", use_container_width=True)
+            st.image(cv2.cvtColor(bev_radar, cv2.COLOR_BGR2RGB), caption="Top-Down Ground Radar (BEV)", width="stretch")
