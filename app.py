@@ -17,6 +17,9 @@ import streamlit as st
 import torch
 from ultralytics import YOLO
 
+# Limit PyTorch CPU thread allocation to prevent cloud quota throttling
+torch.set_num_threads(1)
+
 # ---------------------------------------------------------
 # Page Configuration & Styling
 # ---------------------------------------------------------
@@ -169,12 +172,13 @@ CANDIDATE_PATHS = [
     "runs/hazard_detector/weights/best.pt",
     "weights/best.pt",
     "best.pt",
+    "yolo26n.pt",
     "yolo11n.pt",
     "yolov8n.pt",
     "yolo11s.pt",
 ]
 
-model_path = "yolo11n.pt"
+model_path = "yolo26n.pt"
 for candidate in CANDIDATE_PATHS:
     if os.path.isfile(candidate):
         model_path = candidate
@@ -186,13 +190,17 @@ def load_yolo_engine(path: str):
     try:
         loaded = YOLO(path)
     except Exception:
-        loaded = YOLO("yolov8n.pt")
+        try:
+            loaded = YOLO("yolo11n.pt")
+        except Exception:
+            loaded = YOLO("yolov8n.pt")
     return loaded, dev
 
 model, device = load_yolo_engine(model_path)
 track_history = {}
 
-INFER_SIZE = 480 if "cuda" in device else 384
+# Keep input dimensions modest for cloud CPU performance
+INFER_SIZE = 480 if "cuda" in device else 320
 
 # ---------------------------------------------------------
 # Sidebar Controls & Sensitivity
@@ -202,7 +210,7 @@ with st.sidebar:
     conf_thresh = st.slider("Confidence Cutoff", 0.05, 1.00, 0.35, 0.05)
     iou_thresh = st.slider("IoU NMS Overlap", 0.20, 0.90, 0.45, 0.05)
     enable_tracking = st.toggle("ByteTrack Kinematics", value=True)
-    frame_skip = st.slider("Stream Frame Skip Rate", 1, 8, 3)
+    frame_skip = st.slider("Stream Frame Skip Rate", 1, 10, 4)
 
     st.markdown("---")
     st.subheader("⚠️ Hazard Distance Thresholds")
@@ -442,7 +450,7 @@ if input_mode == "📹 Video Perception Feed":
                 continue
 
             orig_h, orig_w = frame.shape[:2]
-            target_w = 540
+            target_w = 480
             if orig_w > target_w:
                 scale = target_w / orig_w
                 frame = cv2.resize(frame, (target_w, int(orig_h * scale)), interpolation=cv2.INTER_AREA)
@@ -485,7 +493,8 @@ if input_mode == "📹 Video Perception Feed":
             st_frame.image(cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB), channels="RGB", width="stretch")
             st_radar.image(cv2.cvtColor(bev_radar, cv2.COLOR_BGR2RGB), channels="RGB", width="stretch")
 
-            time.sleep(0.01)
+            # Prevents pinning the CPU at 100%
+            time.sleep(0.035)
 
         cap.release()
         try:
