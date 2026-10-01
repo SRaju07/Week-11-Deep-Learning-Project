@@ -1,7 +1,13 @@
 import os
-import time
+import shutil
 import tempfile
 from pathlib import Path
+
+# Set YOLO configuration directory before importing Ultralytics
+os.environ["YOLO_CONFIG_DIR"] = "/tmp/Ultralytics"
+os.makedirs("/tmp/Ultralytics", exist_ok=True)
+
+import time
 from collections import Counter, deque
 
 import cv2
@@ -10,13 +16,6 @@ from PIL import Image
 import streamlit as st
 import torch
 from ultralytics import YOLO
-
-# ---------------------------------------------------------
-# Environment & Path Initialization
-# ---------------------------------------------------------
-config_dir = Path(".ultralytics")
-config_dir.mkdir(parents=True, exist_ok=True)
-os.environ["YOLO_CONFIG_DIR"] = str(config_dir)
 
 # ---------------------------------------------------------
 # Page Configuration & Styling
@@ -491,7 +490,7 @@ if input_mode == "📹 Video Perception Feed":
         cap.release()
         try:
             os.remove(temp_video_path)
-            os.rmdir(temp_dir)
+            shutil.rmtree(temp_dir, ignore_errors=True)
         except OSError:
             pass
 
