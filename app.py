@@ -1,10 +1,9 @@
 import os
-config_dir = Path(".ultralytics")
-config_dir.mkdir(parents=True, exist_ok=True)
-os.environ["YOLO_CONFIG_DIR"] = str(config_dir)
 import time
 import tempfile
+from pathlib import Path
 from collections import Counter, deque
+
 import cv2
 import numpy as np
 from PIL import Image
@@ -13,7 +12,14 @@ import torch
 from ultralytics import YOLO
 
 # ---------------------------------------------------------
-# Page Configuration & Automotive Light Styling
+# Environment & Path Initialization
+# ---------------------------------------------------------
+config_dir = Path(".ultralytics")
+config_dir.mkdir(parents=True, exist_ok=True)
+os.environ["YOLO_CONFIG_DIR"] = str(config_dir)
+
+# ---------------------------------------------------------
+# Page Configuration & Styling
 # ---------------------------------------------------------
 st.set_page_config(
     page_title="RoadSense AI: Real-Time Road Object Perception & Collision Risk Warning System",
@@ -135,12 +141,6 @@ st.markdown(
             box-shadow: 0 2px 6px rgba(239, 68, 68, 0.08);
         }
 
-        div[data-testid="stColumn"] > div > div > div > div.stButton {
-            display: flex;
-            justify-content: center;
-            align-items: center;
-        }
-
         div.stButton > button {
             background-color: #ffffff;
             color: #ef4444;
@@ -149,10 +149,6 @@ st.markdown(
             font-weight: 700;
             font-size: 0.82rem;
             padding: 8px 18px;
-            min-width: 170px;
-            max-width: 220px;
-            margin: 0 auto;
-            display: block;
             transition: all 0.2s ease;
         }
         div.stButton > button:hover {
@@ -196,7 +192,6 @@ def load_yolo_engine(path: str):
 model, device = load_yolo_engine(model_path)
 track_history = {}
 
-# Keep input dimensions modest for cloud CPU environments
 INFER_SIZE = 480 if "cuda" in device else 384
 
 # ---------------------------------------------------------
@@ -249,10 +244,11 @@ def render_light_bev(tracked_objects, frame_w, frame_h, radar_dim=(320, 320)):
 
     for obj in tracked_objects:
         norm_x = (obj['center_x'] - (frame_w / 2)) / (frame_w / 2)
-        rel_dist = max(1.0, 1.0 - (obj['bbox_bottom'] / frame_h))
+        # Objects closer to the bottom of the screen (larger y2) are closer to the car
+        rel_dist = np.clip(1.0 - (obj['bbox_bottom'] / frame_h), 0.05, 1.0)
 
         rx = int(cx + (norm_x * 125))
-        ry = int(cy - (1.0 - rel_dist) * 230)
+        ry = int(cy - (rel_dist * 220))
         rx = np.clip(rx, 10, radar_dim[0] - 10)
         ry = np.clip(ry, 10, radar_dim[1] - 10)
 
@@ -429,10 +425,8 @@ if input_mode == "📹 Video Perception Feed":
         with stream_view:
             st_frame = st.empty()
             st.markdown("<div style='margin-top: 10px;'></div>", unsafe_allow_html=True)
-
-            btn_pad_l, btn_center, btn_pad_r = st.columns([1.2, 1.6, 1.2])
-            with btn_center:
-                stop_btn = st.button("⏹ Abort Pipeline", width="stretch")
+            # Reliable stop control via session state checkbox
+            stop_processing = st.checkbox("⏹ Stop Pipeline Stream", value=False)
 
         with radar_view:
             st.caption("Top-Down Ground Radar (BEV)")
@@ -440,7 +434,7 @@ if input_mode == "📹 Video Perception Feed":
 
         frame_counter = 0
 
-        while cap.isOpened() and not stop_btn:
+        while cap.isOpened() and not stop_processing:
             ret, frame = cap.read()
             if not ret:
                 break
@@ -449,7 +443,6 @@ if input_mode == "📹 Video Perception Feed":
             if frame_counter % frame_skip != 0:
                 continue
 
-            # Resize to 540px width to keep CPU and WebSocket streaming fast
             orig_h, orig_w = frame.shape[:2]
             target_w = 540
             if orig_w > target_w:
@@ -465,7 +458,6 @@ if input_mode == "📹 Video Perception Feed":
             num_critical = len(crit_threats)
             threat_str = ", ".join([f"{k} ({v})" for k, v in Counter(crit_threats).items()]) if crit_threats else "None"
 
-            # Update telemetry every 3 frames to avoid overwhelming UI re-renders
             if frame_counter % (frame_skip * 3) == 0:
                 if num_critical > 0:
                     alert_placeholder.markdown(
@@ -492,11 +484,9 @@ if input_mode == "📹 Video Perception Feed":
                     unsafe_allow_html=True,
                 )
 
-            # Replaced use_container_width=True with width="stretch"
-            st_frame.image(cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB), channels="RGB", width="stretch")
-            st_radar.image(cv2.cvtColor(bev_radar, cv2.COLOR_BGR2RGB), channels="RGB", width="stretch")
+            st_frame.image(cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB), channels="RGB", use_container_width=True)
+            st_radar.image(cv2.cvtColor(bev_radar, cv2.COLOR_BGR2RGB), channels="RGB", use_container_width=True)
 
-            # Crucial: yields control to Streamlit's WebSocket loop so the UI doesn't hang/freeze
             time.sleep(0.01)
 
         cap.release()
@@ -532,6 +522,6 @@ elif input_mode == "🖼️ Single Frame Inspection":
 
         col_cam, col_rad = st.columns([3, 1.4])
         with col_cam:
-            st.image(cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB), caption="Ego Perspective", width="stretch")
+            st.image(cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB), caption="Ego Perspective", use_container_width=True)
         with col_rad:
-            st.image(cv2.cvtColor(bev_radar, cv2.COLOR_BGR2RGB), caption="Top-Down Ground Radar (BEV)", width="stretch")
+            st.image(cv2.cvtColor(bev_radar, cv2.COLOR_BGR2RGB), caption="Top-Down Ground Radar (BEV)", use_container_width=True)
