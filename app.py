@@ -1,7 +1,7 @@
 import os
-# Fix Ultralytics non-writable config dir warning immediately
-os.environ["YOLO_CONFIG_DIR"] = "/tmp/Ultralytics"
-
+config_dir = Path(".ultralytics")
+config_dir.mkdir(parents=True, exist_ok=True)
+os.environ["YOLO_CONFIG_DIR"] = str(config_dir)
 import time
 import tempfile
 from collections import Counter, deque
